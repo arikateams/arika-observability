@@ -1,0 +1,43 @@
+groups:
+  - name: arika-observability
+    rules:
+      - alert: PrometheusTargetDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus target {{ $labels.job }} is down"
+          description: "Target {{ $labels.instance }} has not been scrapeable for 2 minutes."
+
+      - alert: NestMetricsScrapeFailed
+        expr: nest_metrics_scrape_success == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "NestJS metrics scrape is failing"
+          description: "The Python sidecar cannot retrieve metrics through Nginx."
+
+      - alert: NginxStatusScrapeFailed
+        expr: nginx_scrape_success == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Nginx status scrape is failing"
+          description: "The Python sidecar cannot retrieve Nginx stub_status."
+
+      - alert: RootFilesystemLow
+        expr: |
+          (
+            node_filesystem_avail_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}
+            /
+            node_filesystem_size_bytes{mountpoint="/", fstype!~"tmpfs|overlay"}
+          ) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Root filesystem has less than 10% free"
+          description: "The root filesystem on {{ $labels.instance }} is almost full."

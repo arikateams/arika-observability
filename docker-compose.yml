@@ -1,0 +1,107 @@
+services:
+  nestjs:
+    build:
+      context: ../arika-be
+      dockerfile: Dockerfile
+    env_file:
+      - ../arika-be/.env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+    expose:
+      - "3000"
+    networks:
+      - app_edge
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/metrics').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  nginx:
+    image: nginx:1.28-alpine
+    ports:
+      - "127.0.0.1:${NGINX_HOST_PORT:-8080}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      nestjs:
+        condition: service_healthy
+    networks:
+      - app_edge
+      - monitoring
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  python-sidecar:
+    build:
+      context: ./sidecar
+      dockerfile: Dockerfile
+    environment:
+      NGINX_STATUS_URL: http://nginx/nginx_status
+      NEST_METRICS_URL: http://nginx/metrics
+      HTTP_TIMEOUT_SECONDS: "5"
+    expose:
+      - "8000"
+    networks:
+      - monitoring
+      - sidecar_egress
+    depends_on:
+      nginx:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/healthz', timeout=2)"
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    ports:
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - monitoring
+    depends_on:
+      python-sidecar:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  app_edge:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  monitoring:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.0.0/24
+  sidecar_egress:
+    driver: bridge
+
+volumes:
+  prometheus_data:
